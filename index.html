@@ -195,6 +195,7 @@
     <div class="legend" id="legend"></div>
     <div class="right">
       <div class="auth" id="authArea"></div>
+      <button class="btn-ghost" id="membersBtn" style="display:none">회원 관리</button>
       <button class="btn-primary" id="quickAdd">+ 교육 등록</button>
     </div>
   </div>
@@ -235,6 +236,16 @@
       <button class="x" id="authClose" aria-label="닫기">✕</button>
     </div>
     <div class="modal-b" id="authBody"></div>
+  </div>
+</div>
+
+<div class="overlay" id="membersOverlay">
+  <div class="modal manage">
+    <div class="modal-h">
+      <h3>회원 관리</h3>
+      <button class="x" id="membersClose" aria-label="닫기">✕</button>
+    </div>
+    <div class="modal-b" id="membersBody"></div>
   </div>
 </div>
 
@@ -349,8 +360,8 @@ async function refreshCurrentUser(){
   const {data:{session}} = await sb.auth.getSession();
   if(!session){ currentUser=null; return; }
   const uid=session.user.id;
-  const {data:prof} = await sb.from('profiles').select('name').eq('id',uid).maybeSingle();
-  currentUser={ id:uid, email:session.user.email, name:(prof&&prof.name)||session.user.email.split('@')[0] };
+  const {data:prof} = await sb.from('profiles').select('name,is_admin').eq('id',uid).maybeSingle();
+  currentUser={ id:uid, email:session.user.email, name:(prof&&prof.name)||session.user.email.split('@')[0], isAdmin: !!(prof&&prof.is_admin) };
 }
 
 let viewY, viewM;
@@ -457,7 +468,7 @@ function openDay(dstr){
     const spanTag = total>1 ? ` · <b class="num">${idx}/${total}일차</b>` : '';
     const rangeTag = total>1 ? `<br>기간 <b class="num">${t.startDate} ~ ${t.endDate}</b>` : '';
     const apps = t.applicants||[];
-    const isOwner = currentUser && currentUser.id===t.createdBy;
+    const isOwner = currentUser && (currentUser.id===t.createdBy || currentUser.isAdmin);
     const applied = currentUser && apps.some(a=>a.userId===currentUser.id);
     const names = apps.map(a=>esc(a.name)).join(', ');
     const div=document.createElement('div'); div.className='mrow'; div.style.cssText=styleVars(t.site);
@@ -505,6 +516,7 @@ function openEditCourse(id){
 /* ===== 인증 (Supabase Auth) ===== */
 function renderAuthArea(){
   const a=document.getElementById('authArea');
+  document.getElementById('membersBtn').style.display = (currentUser && currentUser.isAdmin) ? '' : 'none';
   if(currentUser){
     a.innerHTML=`<span class="user-chip">👤 ${esc(currentUser.name)}</span><button class="btn-ghost" id="logoutBtn">로그아웃</button>`;
     document.getElementById('logoutBtn').onclick=async ()=>{
@@ -609,7 +621,7 @@ function renderCourseList(){
     const multi=t.startDate!==t.endDate;
     const dateStr=multi?`${t.startDate} ~ ${t.endDate}`:t.startDate;
     const napp=(t.applicants||[]).length;
-    const canEdit = currentUser && currentUser.id===t.createdBy;
+    const canEdit = currentUser && (currentUser.id===t.createdBy || currentUser.isAdmin);
     const item=document.createElement('div'); item.className='course-item'; item.style.cssText=styleVars(s);
     item.innerHTML=`<span class="ci-dot"></span>
       <div class="ci-main">
@@ -645,7 +657,7 @@ function renderCourseForm(rid){
   const base=`${viewY}-${String(viewM+1).padStart(2,'0')}-15`;
   const t = editing ? trainings.find(x=>x.id===rid)
     : {title:'',startDate:base,endDate:base,startTime:'09:00',endTime:'12:00',instructor:'',room:'',owner:''};
-  if(editing && currentUser && currentUser.id!==t.createdBy){
+  if(editing && currentUser && currentUser.id!==t.createdBy && !currentUser.isAdmin){
     setHeader(`<span class="ttag" style="${styleVars(s)}">${s}</span> 교육 상세`, true);
     document.getElementById('mgmtBody').innerHTML='<p class="empty">이 교육은 등록자만 수정할 수 있습니다.</p>';
     return;
@@ -709,12 +721,61 @@ function renderCourseForm(rid){
   };
 }
 
+/* ===== 회원 관리 (관리자 전용) ===== */
+function openMembers(){ if(!currentUser || !currentUser.isAdmin) return; renderMembers(); document.getElementById('membersOverlay').classList.add('open'); }
+function closeMembers(){ document.getElementById('membersOverlay').classList.remove('open'); }
+
+async function renderMembers(){
+  const body=document.getElementById('membersBody');
+  body.innerHTML='<p class="pick-guide">불러오는 중…</p>';
+  const {data,error} = await sb.from('profiles').select('id,name,email,is_admin').order('email',{ascending:true});
+  if(error){ body.innerHTML=`<p class="empty">불러오기 실패: ${esc(error.message)}</p>`; return; }
+  if(!data || !data.length){ body.innerHTML='<p class="empty">가입된 회원이 없습니다.</p>'; return; }
+  body.innerHTML='<p class="pick-guide">이름을 수정하거나 관리자 권한을 지정할 수 있습니다.</p>';
+  const list=document.createElement('div'); list.className='course-list';
+  data.forEach(u=>{
+    const row=document.createElement('div'); row.className='course-item'; row.style.cursor='default';
+    row.innerHTML=`
+      <span class="ci-dot" style="background:var(--ink-3);"></span>
+      <div class="ci-main">
+        <div class="field-row" style="align-items:flex-end;gap:10px;flex-wrap:wrap;">
+          <div class="field" style="flex:1;min-width:120px;"><label>이름</label><input class="mName" type="text" value="${esc(u.name)}"></div>
+          <div class="field" style="flex:1;min-width:160px;"><label>이메일</label>
+            <div style="padding:10px 0;color:var(--ink-2);font-size:13px;">${esc(u.email)}</div></div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2);white-space:nowrap;padding-bottom:10px;">
+            <input class="mAdmin" type="checkbox" ${u.is_admin?'checked':''}> 관리자
+          </label>
+          <button class="btn-save mSave" style="padding:9px 14px;">저장</button>
+        </div>
+        <div class="mErr auth-err"></div>
+      </div>`;
+    const saveBtn=row.querySelector('.mSave');
+    saveBtn.onclick=async ()=>{
+      const nm=row.querySelector('.mName').value.trim();
+      const adm=row.querySelector('.mAdmin').checked;
+      const errEl=row.querySelector('.mErr'); errEl.textContent='';
+      if(!nm){ errEl.textContent='이름을 입력하세요.'; return; }
+      saveBtn.disabled=true; saveBtn.textContent='저장 중…';
+      const {error:uerr} = await sb.from('profiles').update({name:nm, is_admin:adm}).eq('id', u.id);
+      saveBtn.disabled=false; saveBtn.textContent='저장';
+      if(uerr){ errEl.textContent=uerr.message; return; }
+      await loadTrainings(); renderCalendar(); renderLegend();
+      if(u.id===currentUser.id){ await refreshCurrentUser(); renderAuthArea(); }
+    };
+    list.appendChild(row);
+  });
+  body.appendChild(list);
+}
+
 function renderAll(){ renderLegend(); renderCalendar(); }
 
 function goMonth(){ ensureHolidays(viewY); renderLegend(); renderCalendar(); }
 document.getElementById('prev').onclick=()=>{ viewM--; if(viewM<0){viewM=11;viewY--;} goMonth(); };
 document.getElementById('next').onclick=()=>{ viewM++; if(viewM>11){viewM=0;viewY++;} goMonth(); };
 document.getElementById('todayBtn').onclick=()=>{ viewY=TODAY.getFullYear(); viewM=TODAY.getMonth(); goMonth(); };
+document.getElementById('membersBtn').onclick=openMembers;
+document.getElementById('membersClose').onclick=closeMembers;
+document.getElementById('membersOverlay').onclick=(e)=>{ if(e.target.id==='membersOverlay') closeMembers(); };
 document.getElementById('quickAdd').onclick=openManage;
 document.getElementById('mgmtClose').onclick=closeManage;
 document.getElementById('mgmtBack').onclick=goBack;
@@ -723,7 +784,7 @@ document.getElementById('authClose').onclick=closeAuth;
 document.getElementById('authOverlay').onclick=(e)=>{ if(e.target.id==='authOverlay') closeAuth(); };
 document.getElementById('modalClose').onclick=closeModal;
 document.getElementById('overlay').onclick=(e)=>{ if(e.target.id==='overlay') closeModal(); };
-document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeModal(); closeManage(); closeAuth(); } });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeModal(); closeManage(); closeAuth(); closeMembers(); } });
 
 /* ===== 초기 로딩 ===== */
 async function init(){
