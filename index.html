@@ -115,11 +115,19 @@
   .act{border:none;border-radius:9px;padding:8px 14px;font-family:inherit;font-size:13px;cursor:pointer;}
   .act.edit{background:var(--surface);color:var(--ink);border:1px solid var(--line);}
   .act:hover{filter:brightness(.96);}
+  .bar-tooltip{position:fixed;z-index:200;background:var(--ink);color:#fff;border-radius:10px;
+    padding:11px 13px;font-size:12.5px;line-height:1.65;max-width:260px;box-shadow:0 12px 28px rgba(0,0,0,.28);
+    pointer-events:none;display:none;}
+  .bar-tooltip .bt-site{display:inline-block;background:var(--c);color:var(--txt);border-radius:5px;
+    padding:1px 7px;font-size:11px;margin-bottom:6px;}
+  .bar-tooltip .bt-title{font-size:13.5px;margin-bottom:5px;}
+  .bar-tooltip .bt-row{color:rgba(255,255,255,.82);}
+  .bar-tooltip .bt-row b{color:#fff;font-weight:500;}
   .empty{color:var(--ink-3);text-align:center;padding:24px;font-size:13px;}
   .loading-hint{padding:40px;text-align:center;color:var(--ink-3);font-size:13px;}
 
   .pick-guide{margin:2px 2px 15px;color:var(--ink-2);font-size:13px;}
-  .site-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  .site-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:12px;}
   .site-card{display:flex;flex-direction:column;align-items:flex-start;gap:2px;border:1px solid var(--line);background:var(--surface);
     border-radius:14px;padding:18px 18px 16px;cursor:pointer;font-family:inherit;text-align:left;transition:border-color .12s,box-shadow .12s;}
   .site-card:hover{border-color:var(--c);box-shadow:0 6px 18px rgba(22,32,46,.08);}
@@ -242,6 +250,8 @@
   </div>
 </div>
 
+<div id="barTooltip" class="bar-tooltip"></div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ===== Supabase 연결 설정 ===== */
@@ -259,8 +269,10 @@ const SITES = {
   K3:{name:'부평', c:'var(--k3)', soft:'var(--k3-soft)', txt:'#000'},
   K4:{name:'광주', c:'var(--k4)', soft:'var(--k4-soft)', txt:'#000'},
   K5:{name:'송도', c:'var(--k5)', soft:'var(--k5-soft)', txt:'#fff'},
+  '연수원':{name:'', c:'#FFD400', soft:'#FFFAD6', txt:'#000'},
 };
 const styleVars = s => `--c:${SITES[s].c};--soft:${SITES[s].soft};--txt:${SITES[s].txt};`;
+const siteLabel = s => SITES[s].name ? `${s} ${SITES[s].name}` : s;
 
 /* 내장 공휴일 폴백 (API 미연결 시). 배포 시 공공데이터포털 API가 덮어씀 */
 const HOLIDAYS = {
@@ -350,7 +362,7 @@ async function refreshCurrentUser(){
 }
 
 let viewY, viewM;
-const activeSites = {K3:true, K4:true, K5:true};
+const activeSites = {}; Object.keys(SITES).forEach(s=>{ activeSites[s]=true; });
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 viewY = TODAY.getFullYear(); viewM = TODAY.getMonth();
 const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -365,9 +377,9 @@ function renderLegend(){
   Object.keys(SITES).forEach(s=>{
     const cnt = trainings.filter(t=>t.site===s && t.startDate<=mEnd && t.endDate>=mStart).length;
     const b = document.createElement('button');
-    b.className = `site-chip ${s.toLowerCase()}`;
+    b.className = 'site-chip';
     b.setAttribute('aria-pressed', activeSites[s]);
-    b.innerHTML = `<span class="dot"></span>${s} ${SITES[s].name}<span class="cnt num">${cnt}건</span>`;
+    b.innerHTML = `<span class="dot" style="background:${SITES[s].c}"></span>${siteLabel(s)}<span class="cnt num">${cnt}건</span>`;
     b.onclick = ()=>{ activeSites[s]=!activeSites[s]; renderLegend(); renderCalendar(); };
     el.appendChild(b);
   });
@@ -431,10 +443,14 @@ function renderWeek(weekStart){
     bar.style.cssText=styleVars(ev.t.site);
     bar.style.gridColumn=`${ev.s+1} / span ${ev.e-ev.s+1}`;
     bar.style.gridRow=`${ev.lane+2}`;
-    bar.title=ev.t.title;
     bar.innerHTML=`<span class="ev-k">${ev.t.site}</span><span class="ev-t">${esc(ev.t.title)}</span>`;
     const clickDay=iso(days[ev.s]);
     bar.onclick=(e)=>{ e.stopPropagation(); openDay(clickDay); };
+    if(HOVER_CAPABLE){
+      bar.addEventListener('mouseenter', (e)=>showBarTooltip(e, ev.t));
+      bar.addEventListener('mousemove', positionTooltip);
+      bar.addEventListener('mouseleave', hideBarTooltip);
+    }
     week.appendChild(bar);
   });
 
@@ -454,7 +470,7 @@ function openDay(dstr){
     const rangeTag = total>1 ? `<br>기간 <b class="num">${t.startDate} ~ ${t.endDate}</b>` : '';
     const isOwner = currentUser && (currentUser.id===t.createdBy || currentUser.isAdmin);
     const div=document.createElement('div'); div.className='mrow'; div.style.cssText=styleVars(t.site);
-    div.innerHTML=`<span class="mk">${t.site} ${SITES[t.site].name}</span>
+    div.innerHTML=`<span class="mk">${siteLabel(t.site)}</span>
       <div class="mt">${esc(t.title)}</div>
       <div class="md"><b class="num">${t.startTime}–${t.endTime}</b>${spanTag} · 강의실 <b>${esc(t.room||'-')}</b>${rangeTag}<br>
       강사 <b>${esc(t.instructor||'-')}</b> · 담당자 <b>${esc(t.owner||'-')}</b><br>
@@ -466,6 +482,32 @@ function openDay(dstr){
   document.getElementById('overlay').classList.add('open');
 }
 function closeModal(){ document.getElementById('overlay').classList.remove('open'); }
+
+/* ===== 막대 호버 툴팁 (마우스 사용 환경에서만 동작) ===== */
+const HOVER_CAPABLE = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+const tooltipEl = document.getElementById('barTooltip');
+function showBarTooltip(e, t){
+  const total=daysBetween(t.startDate,t.endDate)+1;
+  const dateLine = total>1 ? `${t.startDate} ~ ${t.endDate} · <b class="num">${total}일간</b>` : `${t.startDate}`;
+  tooltipEl.style.cssText = 'display:block;' + styleVars(t.site);
+  tooltipEl.innerHTML = `<span class="bt-site">${siteLabel(t.site)}</span>
+    <div class="bt-title">${esc(t.title)}</div>
+    <div class="bt-row num">${dateLine}</div>
+    <div class="bt-row">시간 <b class="num">${t.startTime}–${t.endTime}</b></div>
+    <div class="bt-row">강의실 <b>${esc(t.room||'-')}</b></div>
+    <div class="bt-row">강사 <b>${esc(t.instructor||'-')}</b> · 담당자 <b>${esc(t.owner||'-')}</b></div>`;
+  positionTooltip(e);
+}
+function positionTooltip(e){
+  const pad=14, vw=window.innerWidth, vh=window.innerHeight;
+  const rect=tooltipEl.getBoundingClientRect();
+  let x=e.clientX+pad, y=e.clientY+pad;
+  if(x+rect.width>vw-8) x=e.clientX-rect.width-pad;
+  if(y+rect.height>vh-8) y=e.clientY-rect.height-pad;
+  tooltipEl.style.left=Math.max(8,x)+'px';
+  tooltipEl.style.top=Math.max(8,y)+'px';
+}
+function hideBarTooltip(){ tooltipEl.style.display='none'; }
 
 function openEditCourse(id){
   const t=trainings.find(x=>x.id===id); if(!t) return;
@@ -557,7 +599,7 @@ function renderSitePicker(){
     const cnt=trainings.filter(t=>t.site===s).length;
     const b=document.createElement('button');
     b.className='site-card '+s.toLowerCase(); b.style.cssText=styleVars(s);
-    b.innerHTML=`<span class="sc-code">${s}</span><span class="sc-name">${SITES[s].name}</span><span class="sc-cnt">${cnt}개 과정</span>`;
+    b.innerHTML=`<span class="sc-code">${s}</span>${SITES[s].name?`<span class="sc-name">${SITES[s].name}</span>`:''}<span class="sc-cnt">${cnt}개 과정</span>`;
     b.onclick=()=>{ manageSite=s; renderCourseList(); };
     cards.appendChild(b);
   });
@@ -566,7 +608,7 @@ function renderSitePicker(){
 
 function renderCourseList(){
   mgmtView='list'; const s=manageSite;
-  setHeader(`<span class="ttag" style="${styleVars(s)}">${s}</span> ${SITES[s].name} · 교육 관리`, true);
+  setHeader(`<span class="ttag" style="${styleVars(s)}">${s}</span> ${siteLabel(s)} · 교육 관리`, true);
   const rows=trainings.filter(t=>t.site===s).slice()
     .sort((a,b)=>a.startDate.localeCompare(b.startDate)||a.startTime.localeCompare(b.startTime));
   const body=document.getElementById('mgmtBody');
