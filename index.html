@@ -196,6 +196,9 @@
     <div class="legend" id="legend"></div>
     <div class="right">
       <div class="auth" id="authArea"></div>
+      <button class="btn-ghost" id="exportBtn">엑셀 다운로드</button>
+      <button class="btn-ghost" id="importBtn" style="display:none">엑셀 일괄등록</button>
+      <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none">
       <button class="btn-ghost" id="membersBtn" style="display:none">회원 관리</button>
       <button class="btn-primary" id="quickAdd">+ 교육 등록</button>
     </div>
@@ -252,6 +255,7 @@
 
 <div id="barTooltip" class="bar-tooltip"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ===== Supabase 연결 설정 ===== */
@@ -520,6 +524,7 @@ function openEditCourse(id){
 function renderAuthArea(){
   const a=document.getElementById('authArea');
   document.getElementById('membersBtn').style.display = (currentUser && currentUser.isAdmin) ? '' : 'none';
+  document.getElementById('importBtn').style.display = currentUser ? '' : 'none';
   if(currentUser){
     a.innerHTML=`<span class="user-chip">👤 ${esc(currentUser.name)}</span><button class="btn-ghost" id="logoutBtn">로그아웃</button>`;
     document.getElementById('logoutBtn').onclick=async ()=>{
@@ -769,6 +774,86 @@ async function renderMembers(){
   body.appendChild(list);
 }
 
+/* ===== 엑셀 다운로드 / 일괄 등록 ===== */
+const EXCEL_HEADERS = ['사업장','교육명','시작일','종료일','시작시간','종료시간','강사','강의실','담당자'];
+
+function exportExcel(){
+  const rows = trainings.slice()
+    .sort((a,b)=>a.startDate.localeCompare(b.startDate)||a.startTime.localeCompare(b.startTime))
+    .map(t=>({
+      '사업장':t.site, '교육명':t.title, '시작일':t.startDate, '종료일':t.endDate,
+      '시작시간':t.startTime, '종료시간':t.endTime,
+      '강사':t.instructor||'', '강의실':t.room||'', '담당자':t.owner||'',
+    }));
+  const ws = XLSX.utils.json_to_sheet(rows, {header:EXCEL_HEADERS});
+  ws['!cols'] = [{wch:9},{wch:28},{wch:12},{wch:12},{wch:9},{wch:9},{wch:12},{wch:16},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '교육목록');
+  const d=new Date();
+  const fname=`LND_교육일정_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.xlsx`;
+  XLSX.writeFile(wb, fname);
+}
+
+function normDate(v){
+  if(v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+  return String(v??'').trim();
+}
+function normTime(v){
+  if(v instanceof Date) return `${String(v.getHours()).padStart(2,'0')}:${String(v.getMinutes()).padStart(2,'0')}`;
+  const s=String(v??'').trim();
+  const m=s.match(/^(\d{1,2}):(\d{2})/);
+  return m ? `${m[1].padStart(2,'0')}:${m[2]}` : s;
+}
+
+async function importExcelFile(file){
+  if(!currentUser){ openAuth('login'); return; }
+  const importBtn=document.getElementById('importBtn');
+  importBtn.disabled=true; importBtn.textContent='읽는 중…';
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array', cellDates:true});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(ws, {defval:''});
+    if(!json.length){ alert('시트에 등록할 데이터가 없습니다.'); return; }
+
+    const validSites = Object.keys(SITES);
+    const payload=[]; const errors=[];
+    json.forEach((row,i)=>{
+      const rn=i+2; // 엑셀 실제 행 번호(헤더 다음줄부터)
+      const site=String(row['사업장']||'').trim();
+      const title=String(row['교육명']||'').trim();
+      const startDate=normDate(row['시작일']);
+      let endDate=normDate(row['종료일'])||startDate;
+      const startTime=normTime(row['시작시간'])||'09:00';
+      const endTime=normTime(row['종료시간'])||'12:00';
+      if(!validSites.includes(site)){ errors.push(`${rn}행: 사업장 값이 올바르지 않습니다 (${site||'비어있음'})`); return; }
+      if(!title){ errors.push(`${rn}행: 교육명이 비어있습니다`); return; }
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate)){ errors.push(`${rn}행: 시작일 형식이 올바르지 않습니다 (${startDate||'비어있음'})`); return; }
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(endDate)) endDate=startDate;
+      if(endDate<startDate) endDate=startDate;
+      payload.push({
+        site, title, start_date:startDate, end_date:endDate, start_time:startTime, end_time:endTime,
+        instructor:String(row['강사']||'').trim(), room:String(row['강의실']||'').trim(), owner:String(row['담당자']||'').trim(),
+        created_by: currentUser.id,
+      });
+    });
+
+    if(payload.length){
+      const {error} = await sb.from('trainings').insert(payload);
+      if(error){ alert('등록 중 오류가 발생했습니다: '+error.message); return; }
+      await loadTrainings(); renderCalendar(); renderLegend();
+    }
+    let msg=`${payload.length}건 등록 완료`;
+    if(errors.length) msg += `\n\n건너뛴 ${errors.length}건:\n`+errors.slice(0,10).join('\n')+(errors.length>10?`\n…외 ${errors.length-10}건`:'');
+    alert(msg);
+  }catch(e){
+    console.error(e);
+    alert('파일을 읽는 중 문제가 발생했습니다: '+(e.message||''));
+  }finally{
+    importBtn.disabled=false; importBtn.textContent='엑셀 일괄등록';
+  }
+}
+
 function renderAll(){ renderLegend(); renderCalendar(); }
 
 function goMonth(){ ensureHolidays(viewY); renderLegend(); renderCalendar(); }
@@ -778,6 +863,12 @@ document.getElementById('todayBtn').onclick=()=>{ viewY=TODAY.getFullYear(); vie
 document.getElementById('membersBtn').onclick=openMembers;
 document.getElementById('membersClose').onclick=closeMembers;
 document.getElementById('membersOverlay').onclick=(e)=>{ if(e.target.id==='membersOverlay') closeMembers(); };
+document.getElementById('exportBtn').onclick=exportExcel;
+document.getElementById('importBtn').onclick=()=>{ if(!currentUser){ openAuth('login'); return; } document.getElementById('importFile').click(); };
+document.getElementById('importFile').onchange=(e)=>{
+  const file=e.target.files[0]; e.target.value='';
+  if(file) importExcelFile(file);
+};
 document.getElementById('quickAdd').onclick=openManage;
 document.getElementById('mgmtClose').onclick=closeManage;
 document.getElementById('mgmtBack').onclick=goBack;
