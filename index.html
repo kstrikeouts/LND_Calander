@@ -825,12 +825,33 @@ function exportExcel(){
 }
 
 /* ===== Table 형태로 등록·수정 (전체 사업장 한 화면) ===== */
+let tableFilter = {};
+let tableFilterRow = null;
+
+function renderTableFilterChips(container){
+  container.innerHTML='';
+  Object.keys(SITES).forEach(s=>{
+    const cnt=trainings.filter(t=>t.site===s).length;
+    const b=document.createElement('button');
+    b.className='site-chip';
+    b.setAttribute('aria-pressed', tableFilter[s]);
+    b.innerHTML=`<span class="dot" style="background:${SITES[s].c}"></span>${siteLabel(s)}<span class="cnt num">${cnt}건</span>`;
+    b.onclick=()=>{ tableFilter[s]=!tableFilter[s]; renderTableFilterChips(container); renderTableRows(); };
+    container.appendChild(b);
+  });
+}
+
 async function renderTableMode(){
   mgmtView='table';
+  Object.keys(SITES).forEach(s=>{ tableFilter[s]=true; });
   document.querySelector('#manageOverlay .modal').classList.add('wide');
   setHeader('Table 형태로 등록·수정', true);
   const body=document.getElementById('mgmtBody');
   body.innerHTML='<p class="pick-guide">엑셀 다운로드와 같은 형식입니다. 셀을 바로 수정하거나 아래에서 행을 추가할 수 있습니다.</p>';
+  const filterRow=document.createElement('div'); filterRow.className='legend'; filterRow.style.marginBottom='12px';
+  tableFilterRow=filterRow;
+  renderTableFilterChips(filterRow);
+  body.appendChild(filterRow);
   const wrap=document.createElement('div'); wrap.className='tbl-wrap';
   wrap.innerHTML=`<table class="tbl"><thead><tr>
     <th style="width:96px;">사업장</th>
@@ -855,9 +876,13 @@ async function renderTableMode(){
 function renderTableRows(){
   const tb=document.getElementById('tblBody'); if(!tb) return;
   tb.innerHTML='';
-  const rows=trainings.slice().sort((a,b)=>a.startDate.localeCompare(b.startDate)||a.startTime.localeCompare(b.startTime));
+  const rows=trainings.filter(t=>tableFilter[t.site])
+    .slice().sort((a,b)=>a.startDate.localeCompare(b.startDate)||a.startTime.localeCompare(b.startTime));
   if(!rows.length){
-    tb.innerHTML='<tr><td colspan="10" style="padding:18px;color:var(--ink-3);">등록된 교육이 없습니다. 아래 <b>+ 행 추가</b>로 등록하세요.</td></tr>';
+    const msg = trainings.length
+      ? '선택한 사업장에 등록된 교육이 없습니다.'
+      : '등록된 교육이 없습니다. 아래 <b>+ 행 추가</b>로 등록하세요.';
+    tb.innerHTML=`<tr><td colspan="10" style="padding:18px;color:var(--ink-3);">${msg}</td></tr>`;
     return;
   }
   const colMap={site:'site',title:'title',startDate:'start_date',endDate:'end_date',startTime:'start_time',endTime:'end_time',instructor:'instructor',room:'room',owner:'owner'};
@@ -910,6 +935,8 @@ async function addTableRow(){
     instructor:'', room:'', owner:'', created_by:currentUser.id };
   const {data,error}=await sb.from('trainings').insert(payload).select().single();
   if(error){ alert('추가 실패: '+error.message); return; }
+  tableFilter[defaultSite]=true;
+  if(tableFilterRow) renderTableFilterChips(tableFilterRow);
   await loadTrainings(); renderCalendar(); renderLegend(); renderTableRows();
   requestAnimationFrame(()=>{
     const tr=document.querySelector(`#tblBody tr[data-id="${data.id}"]`);
