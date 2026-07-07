@@ -134,6 +134,24 @@
   .site-card .sc-code{display:inline-block;background:var(--c);color:var(--txt);border-radius:9px;padding:4px 12px;font-size:20px;letter-spacing:.01em;}
   .site-card .sc-name{font-size:14px;color:var(--ink);margin-top:8px;}
   .site-card .sc-cnt{font-size:12px;color:var(--ink-3);margin-top:4px;}
+  .modal.manage.wide{max-width:1120px;}
+  .mode-switch{background:none;border:none;color:var(--ink-2);text-decoration:underline;cursor:pointer;
+    font-size:13px;font-family:inherit;padding:0;margin-top:2px;}
+  .mode-switch:hover{color:var(--ink);}
+  .tbl-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px;}
+  table.tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:960px;}
+  .tbl thead th{position:sticky;top:0;background:#FAFBFD;border-bottom:1px solid var(--line);text-align:left;
+    padding:9px 8px;font-weight:500;color:var(--ink-2);font-size:12px;white-space:nowrap;}
+  .tbl tbody td{border-bottom:1px solid var(--line-2);padding:3px 4px;}
+  .tbl tbody tr:last-child td{border-bottom:none;}
+  .tbl input,.tbl select{width:100%;border:1px solid transparent;background:transparent;border-radius:7px;
+    padding:6px 7px;font-family:inherit;font-size:13px;color:var(--ink);}
+  .tbl input.num,.tbl select{font-variant-numeric:tabular-nums;}
+  .tbl input:hover,.tbl select:hover{border-color:var(--line);}
+  .tbl input:focus,.tbl select:focus{outline:none;border-color:var(--ink);background:#fff;box-shadow:0 0 0 3px rgba(22,32,46,.06);}
+  .tbl input:disabled,.tbl select:disabled{color:var(--ink-3);}
+  .tbl-del{border:none;background:transparent;cursor:pointer;color:var(--ink-3);border-radius:7px;padding:6px 7px;font-size:14px;}
+  .tbl-del:hover{background:#FCEBEE;color:var(--red);}
   .mgmt-bar{display:flex;align-items:center;justify-content:space-between;margin:2px 2px 12px;}
   .mgmt-cnt{font-size:13px;color:var(--ink-2);}
 
@@ -197,8 +215,6 @@
     <div class="right">
       <div class="auth" id="authArea"></div>
       <button class="btn-ghost" id="exportBtn">엑셀 다운로드</button>
-      <button class="btn-ghost" id="importBtn" style="display:none">엑셀 일괄등록</button>
-      <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none">
       <button class="btn-ghost" id="membersBtn" style="display:none">회원 관리</button>
       <button class="btn-primary" id="quickAdd">+ 교육 등록</button>
     </div>
@@ -524,7 +540,6 @@ function openEditCourse(id){
 function renderAuthArea(){
   const a=document.getElementById('authArea');
   document.getElementById('membersBtn').style.display = (currentUser && currentUser.isAdmin) ? '' : 'none';
-  document.getElementById('importBtn').style.display = currentUser ? '' : 'none';
   if(currentUser){
     a.innerHTML=`<span class="user-chip">👤 ${esc(currentUser.name)}</span><button class="btn-ghost" id="logoutBtn">로그아웃</button>`;
     document.getElementById('logoutBtn').onclick=async ()=>{
@@ -587,8 +602,15 @@ function renderAuthForm(){
 let manageSite=null, mgmtView='picker';
 
 function openManage(){ if(!currentUser){ openAuth('login'); return; } renderSitePicker(); document.getElementById('manageOverlay').classList.add('open'); }
-function closeManage(){ document.getElementById('manageOverlay').classList.remove('open'); }
-function goBack(){ if(mgmtView==='form') renderCourseList(); else if(mgmtView==='list') renderSitePicker(); }
+function closeManage(){
+  document.getElementById('manageOverlay').classList.remove('open');
+  document.querySelector('#manageOverlay .modal').classList.remove('wide');
+}
+function goBack(){
+  if(mgmtView==='form') renderCourseList();
+  else if(mgmtView==='list') renderSitePicker();
+  else if(mgmtView==='table') renderSitePicker();
+}
 function setHeader(html, showBack){
   document.getElementById('mgmtBack').style.display = showBack?'':'none';
   document.getElementById('mgmtTitle').innerHTML = html;
@@ -596,6 +618,7 @@ function setHeader(html, showBack){
 
 function renderSitePicker(){
   manageSite=null; mgmtView='picker';
+  document.querySelector('#manageOverlay .modal').classList.remove('wide');
   setHeader('사업장 선택', false);
   const body=document.getElementById('mgmtBody');
   body.innerHTML='<p class="pick-guide">교육을 등록·관리할 사업장을 선택하세요.</p>';
@@ -609,10 +632,17 @@ function renderSitePicker(){
     cards.appendChild(b);
   });
   body.appendChild(cards);
+  const modeBtn=document.createElement('button');
+  modeBtn.className='mode-switch';
+  modeBtn.textContent='또는 Table 형태로 한 번에 등록·수정하기 →';
+  modeBtn.onclick=renderTableMode;
+  body.appendChild(document.createElement('br'));
+  body.appendChild(modeBtn);
 }
 
 function renderCourseList(){
   mgmtView='list'; const s=manageSite;
+  document.querySelector('#manageOverlay .modal').classList.remove('wide');
   setHeader(`<span class="ttag" style="${styleVars(s)}">${s}</span> ${siteLabel(s)} · 교육 관리`, true);
   const rows=trainings.filter(t=>t.site===s).slice()
     .sort((a,b)=>a.startDate.localeCompare(b.startDate)||a.startTime.localeCompare(b.startTime));
@@ -794,64 +824,97 @@ function exportExcel(){
   XLSX.writeFile(wb, fname);
 }
 
-function normDate(v){
-  if(v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
-  return String(v??'').trim();
+/* ===== Table 형태로 등록·수정 (전체 사업장 한 화면) ===== */
+async function renderTableMode(){
+  mgmtView='table';
+  document.querySelector('#manageOverlay .modal').classList.add('wide');
+  setHeader('Table 형태로 등록·수정', true);
+  const body=document.getElementById('mgmtBody');
+  body.innerHTML='<p class="pick-guide">엑셀 다운로드와 같은 형식입니다. 셀을 바로 수정하거나 아래에서 행을 추가할 수 있습니다.</p>';
+  const wrap=document.createElement('div'); wrap.className='tbl-wrap';
+  wrap.innerHTML=`<table class="tbl"><thead><tr>
+    <th style="width:96px;">사업장</th>
+    <th style="min-width:200px;">교육명</th>
+    <th style="width:128px;">시작일</th>
+    <th style="width:128px;">종료일</th>
+    <th style="width:82px;">시작</th>
+    <th style="width:82px;">종료</th>
+    <th style="min-width:96px;">강사</th>
+    <th style="min-width:120px;">강의실</th>
+    <th style="min-width:96px;">담당자</th>
+    <th style="width:36px;"></th>
+  </tr></thead><tbody id="tblBody"></tbody></table>`;
+  body.appendChild(wrap);
+  const addBtn=document.createElement('button');
+  addBtn.className='btn-add'; addBtn.style.marginTop='10px'; addBtn.textContent='+ 행 추가';
+  addBtn.onclick=addTableRow;
+  body.appendChild(addBtn);
+  renderTableRows();
 }
-function normTime(v){
-  if(v instanceof Date) return `${String(v.getHours()).padStart(2,'0')}:${String(v.getMinutes()).padStart(2,'0')}`;
-  const s=String(v??'').trim();
-  const m=s.match(/^(\d{1,2}):(\d{2})/);
-  return m ? `${m[1].padStart(2,'0')}:${m[2]}` : s;
-}
 
-async function importExcelFile(file){
-  if(!currentUser){ openAuth('login'); return; }
-  const importBtn=document.getElementById('importBtn');
-  importBtn.disabled=true; importBtn.textContent='읽는 중…';
-  try{
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, {type:'array', cellDates:true});
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const json = XLSX.utils.sheet_to_json(ws, {defval:''});
-    if(!json.length){ alert('시트에 등록할 데이터가 없습니다.'); return; }
-
-    const validSites = Object.keys(SITES);
-    const payload=[]; const errors=[];
-    json.forEach((row,i)=>{
-      const rn=i+2; // 엑셀 실제 행 번호(헤더 다음줄부터)
-      const site=String(row['사업장']||'').trim();
-      const title=String(row['교육명']||'').trim();
-      const startDate=normDate(row['시작일']);
-      let endDate=normDate(row['종료일'])||startDate;
-      const startTime=normTime(row['시작시간'])||'09:00';
-      const endTime=normTime(row['종료시간'])||'12:00';
-      if(!validSites.includes(site)){ errors.push(`${rn}행: 사업장 값이 올바르지 않습니다 (${site||'비어있음'})`); return; }
-      if(!title){ errors.push(`${rn}행: 교육명이 비어있습니다`); return; }
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate)){ errors.push(`${rn}행: 시작일 형식이 올바르지 않습니다 (${startDate||'비어있음'})`); return; }
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(endDate)) endDate=startDate;
-      if(endDate<startDate) endDate=startDate;
-      payload.push({
-        site, title, start_date:startDate, end_date:endDate, start_time:startTime, end_time:endTime,
-        instructor:String(row['강사']||'').trim(), room:String(row['강의실']||'').trim(), owner:String(row['담당자']||'').trim(),
-        created_by: currentUser.id,
-      });
-    });
-
-    if(payload.length){
-      const {error} = await sb.from('trainings').insert(payload);
-      if(error){ alert('등록 중 오류가 발생했습니다: '+error.message); return; }
-      await loadTrainings(); renderCalendar(); renderLegend();
-    }
-    let msg=`${payload.length}건 등록 완료`;
-    if(errors.length) msg += `\n\n건너뛴 ${errors.length}건:\n`+errors.slice(0,10).join('\n')+(errors.length>10?`\n…외 ${errors.length-10}건`:'');
-    alert(msg);
-  }catch(e){
-    console.error(e);
-    alert('파일을 읽는 중 문제가 발생했습니다: '+(e.message||''));
-  }finally{
-    importBtn.disabled=false; importBtn.textContent='엑셀 일괄등록';
+function renderTableRows(){
+  const tb=document.getElementById('tblBody'); if(!tb) return;
+  tb.innerHTML='';
+  const rows=trainings.slice().sort((a,b)=>a.startDate.localeCompare(b.startDate)||a.startTime.localeCompare(b.startTime));
+  if(!rows.length){
+    tb.innerHTML='<tr><td colspan="10" style="padding:18px;color:var(--ink-3);">등록된 교육이 없습니다. 아래 <b>+ 행 추가</b>로 등록하세요.</td></tr>';
+    return;
   }
+  const colMap={site:'site',title:'title',startDate:'start_date',endDate:'end_date',startTime:'start_time',endTime:'end_time',instructor:'instructor',room:'room',owner:'owner'};
+  rows.forEach(t=>{
+    const canEdit = currentUser && (currentUser.id===t.createdBy || currentUser.isAdmin);
+    const tr=document.createElement('tr'); tr.dataset.id=t.id;
+    const siteOpts=Object.keys(SITES).map(s=>`<option value="${s}" ${s===t.site?'selected':''}>${s}</option>`).join('');
+    tr.innerHTML=`
+      <td><select data-f="site" ${canEdit?'':'disabled'}>${siteOpts}</select></td>
+      <td><input data-f="title" value="${esc(t.title)}" ${canEdit?'':'disabled'}></td>
+      <td><input type="date" class="num" data-f="startDate" value="${t.startDate}" ${canEdit?'':'disabled'}></td>
+      <td><input type="date" class="num" data-f="endDate" value="${t.endDate}" ${canEdit?'':'disabled'}></td>
+      <td><input type="time" class="num" data-f="startTime" value="${t.startTime}" ${canEdit?'':'disabled'}></td>
+      <td><input type="time" class="num" data-f="endTime" value="${t.endTime}" ${canEdit?'':'disabled'}></td>
+      <td><input data-f="instructor" value="${esc(t.instructor)}" ${canEdit?'':'disabled'}></td>
+      <td><input data-f="room" value="${esc(t.room)}" ${canEdit?'':'disabled'}></td>
+      <td><input data-f="owner" value="${esc(t.owner)}" ${canEdit?'':'disabled'}></td>
+      <td>${canEdit?'<button class="tbl-del" title="삭제">🗑</button>':''}</td>`;
+    if(canEdit){
+      tr.querySelectorAll('[data-f]').forEach(inp=>{
+        inp.addEventListener('change', async ()=>{
+          const field=inp.dataset.f;
+          const payload={ [colMap[field]]: inp.value };
+          if(field==='startDate'){
+            const endInput=tr.querySelector('[data-f="endDate"]');
+            if(endInput.value < inp.value){ endInput.value = inp.value; payload.end_date = inp.value; }
+          }
+          const {error}=await sb.from('trainings').update(payload).eq('id', t.id);
+          if(error){ alert('저장 실패: '+error.message); }
+          await loadTrainings(); renderCalendar(); renderLegend();
+          if(mgmtView==='table') renderTableRows();
+        });
+      });
+      const delBtn=tr.querySelector('.tbl-del');
+      if(delBtn) delBtn.onclick=async ()=>{
+        if(!confirm('이 교육을 삭제할까요?')) return;
+        await deleteTraining(t.id);
+        renderCalendar(); renderLegend(); renderTableRows();
+      };
+    }
+    tb.appendChild(tr);
+  });
+}
+
+async function addTableRow(){
+  if(!currentUser){ openAuth('login'); return; }
+  const base=`${viewY}-${String(viewM+1).padStart(2,'0')}-15`;
+  const defaultSite=Object.keys(SITES)[0];
+  const payload={ site:defaultSite, title:'', start_date:base, end_date:base, start_time:'09:00', end_time:'12:00',
+    instructor:'', room:'', owner:'', created_by:currentUser.id };
+  const {data,error}=await sb.from('trainings').insert(payload).select().single();
+  if(error){ alert('추가 실패: '+error.message); return; }
+  await loadTrainings(); renderCalendar(); renderLegend(); renderTableRows();
+  requestAnimationFrame(()=>{
+    const tr=document.querySelector(`#tblBody tr[data-id="${data.id}"]`);
+    if(tr){ tr.scrollIntoView({block:'center'}); const ti=tr.querySelector('[data-f="title"]'); ti&&ti.focus(); }
+  });
 }
 
 function renderAll(){ renderLegend(); renderCalendar(); }
@@ -864,11 +927,6 @@ document.getElementById('membersBtn').onclick=openMembers;
 document.getElementById('membersClose').onclick=closeMembers;
 document.getElementById('membersOverlay').onclick=(e)=>{ if(e.target.id==='membersOverlay') closeMembers(); };
 document.getElementById('exportBtn').onclick=exportExcel;
-document.getElementById('importBtn').onclick=()=>{ if(!currentUser){ openAuth('login'); return; } document.getElementById('importFile').click(); };
-document.getElementById('importFile').onchange=(e)=>{
-  const file=e.target.files[0]; e.target.value='';
-  if(file) importExcelFile(file);
-};
 document.getElementById('quickAdd').onclick=openManage;
 document.getElementById('mgmtClose').onclick=closeManage;
 document.getElementById('mgmtBack').onclick=goBack;
